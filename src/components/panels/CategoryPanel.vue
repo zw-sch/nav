@@ -92,7 +92,8 @@
     </div>
 
     <CategoryEditDialog
-      v-model="showEditDialog"
+      :show="showEditDialog"
+      @update:show="showEditDialog = $event"
       :editing="editingCategory"
       @success="handleSuccess"
     />

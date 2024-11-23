@@ -48,40 +48,20 @@
   </n-modal>
 
   <!-- 快速添加分类的弹出框 -->
-  <n-modal
-    v-model:show="showQuickAddCategory"
-    title="添加分类"
-    preset="dialog"
-    :style="{ width: '400px' }"
-  >
-    <n-form
-      ref="categoryFormRef"
-      :model="categoryForm"
-      :rules="categoryRules"
-      label-placement="left"
-      label-width="80"
-    >
-      <n-form-item label="名称" path="name">
-        <n-input v-model:value="categoryForm.name" placeholder="输入分类名称" />
-      </n-form-item>
-      <n-form-item label="图标" path="icon">
-        <n-input v-model:value="categoryForm.icon" placeholder="输入图标名称（可选）" />
-      </n-form-item>
-    </n-form>
-    <template #action>
-      <n-space justify="end">
-        <n-button @click="showQuickAddCategory = false">取消</n-button>
-        <n-button type="primary" @click="handleQuickAddCategory">确定</n-button>
-      </n-space>
-    </template>
-  </n-modal>
+  <CategoryEditDialog
+    :show="showQuickAddCategory"
+    @update:show="showQuickAddCategory = $event"
+    :editing="null"
+    @success="handleQuickAddSuccess"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { Icon } from '@iconify/vue'
-import { NModal, NForm, NFormItem, NInput, NButton, NSelect, useMessage } from 'naive-ui'
+import { NModal, NForm, NFormItem, NInput, NButton, NSelect, NInputNumber, useMessage } from 'naive-ui'
 import { useBookmarkStore } from '@/stores/bookmarkStore'
+import CategoryEditDialog from './CategoryEditDialog.vue'
 import type { Bookmark } from '@/types/bookmark'
 
 const props = defineProps<{
@@ -200,11 +180,15 @@ const renderCategoryLabel = (option: { label: string; path?: string[] }) => {
   return option.path ? option.path.join(' / ') : option.label
 }
 
+// 快速添加分类相关
+const showQuickAddCategory = ref(false)
+const previousCategoryId = ref<number>()
+
 // 处理分类选择
 const handleCategorySelect = (value: number | string) => {
   if (value === 'add_new') {
     showQuickAddCategory.value = true
-    // 恢复之前选中的值
+    // 恢复之前选择的值
     form.value.categoryId = previousCategoryId.value
   } else {
     previousCategoryId.value = value as number
@@ -212,48 +196,17 @@ const handleCategorySelect = (value: number | string) => {
   }
 }
 
-// 保存上一次选择的分类ID
-const previousCategoryId = ref<number>()
+// 处理快速添加分类成功
+const handleQuickAddSuccess = async () => {
+  // 重新获取分类列表
+  await bookmarkStore.fetchCategories()
 
-// 快速添加分类的弹出框
-const showQuickAddCategory = ref(false)
-const categoryFormRef = ref<typeof NForm | null>(null)
-const categoryForm = ref({
-  name: '',
-  icon: '',
-})
-
-const categoryRules = {
-  name: {
-    required: true,
-    message: '请输入分类名称',
-    trigger: 'blur',
-  },
-}
-
-// 处理快速添加分类
-const handleQuickAddCategory = async () => {
-  try {
-    await categoryFormRef.value?.validate()
-    const newCategory = await bookmarkStore.addCategory({
-      name: categoryForm.value.name,
-      icon: categoryForm.value.icon || undefined,
-    })
-
-    // 添加成功后，自动选择新分类
-    form.value.categoryId = newCategory.id
-
-    // 关闭弹窗并重置表单
-    showQuickAddCategory.value = false
-    categoryForm.value = {
-      name: '',
-      icon: '',
-    }
-
+  // 获取最新添加的分类
+  const latestCategory = bookmarkStore.state.categories[bookmarkStore.state.categories.length - 1]
+  if (latestCategory) {
+    // 自动选择新添加的分类
+    form.value.categoryId = latestCategory.id
     message.success('添加分类成功')
-  } catch (error) {
-    console.error('Failed to add category:', error)
-    message.error('添加分类失败')
   }
 }
 </script>
