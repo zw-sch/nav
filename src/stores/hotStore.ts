@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { HotSource } from '@/types/hot'
-import { getSources, addSource as apiAddSource, updateSource as apiUpdateSource, deleteSource } from '@/api/hot'
+import { getSources, updateSource as apiUpdateSource, deleteSource } from '@/api/hot'
 import { useUserStore } from './userStore'
 
 export const useHotStore = defineStore('hot', () => {
@@ -45,10 +45,41 @@ export const useHotStore = defineStore('hot', () => {
     localStorage.setItem('lastSelectedHotSourceId', source.id.toString())
   }
 
+  // 更新源方法
+  const updateSource = async (id: number, data: Partial<HotSource>) => {
+    try {
+      // 转换 enablePreview 为 enable_preview
+      const apiData = {
+        ...data,
+        enable_preview: data.enablePreview,
+        // 移除前端使用的字段
+        enablePreview: undefined
+      }
+      await apiUpdateSource(id, apiData)
+      await fetchSources() // 更新后重新获取列表
+    } catch (error) {
+      console.error('Failed to update hot source:', error)
+      throw error
+    }
+  }
+
+  // 删除源方法
+  const removeSource = async (id: number) => {
+    try {
+      await deleteSource(id)
+      await fetchSources() // 删除后重新获取列表
+    } catch (error) {
+      console.error('Failed to delete hot source:', error)
+      throw error
+    }
+  }
+
   return {
     sources,
     currentSource,
     setCurrentSource,
-    fetchSources
+    fetchSources,
+    updateSource,
+    removeSource
   }
 })

@@ -138,9 +138,10 @@ import AddHotSourceDialog from '../AddHotSourceDialog.vue'
 import DeleteConfirm from '../common/DeleteConfirm.vue'
 import type { HotSource } from '@/types/hot'
 
-interface ExtendedHotSource extends HotSource {
+interface ExtendedHotSource extends Omit<HotSource, 'sort_order'> {
   type: string;
   sortOrder: number;
+  sort_order?: number;
 }
 
 const { isDesktop } = useBreakpoint()
@@ -227,11 +228,15 @@ const handleSuccess = () => {
   editingSource.value = null
 }
 
-// 添加预览开关处理函数
+// 修改预览开关处理函数
 const handlePreviewChange = async (source: HotSource, value: boolean) => {
   try {
     await hotStore.updateSource(source.id, {
-      ...source,
+      name: source.name,
+      url: source.url,
+      icon: source.icon,
+      type: source.type,
+      sort_order: source.sort_order,
       enablePreview: value
     })
   } catch (error) {
@@ -254,6 +259,7 @@ const handleDragStart = (e: DragEvent, source: ExtendedHotSource) => {
   }
 }
 
+// 修改拖拽排序处理函数
 const handleDrop = async (e: DragEvent, target: ExtendedHotSource) => {
   e.preventDefault()
   const dragged = draggedItem.value
@@ -266,12 +272,18 @@ const handleDrop = async (e: DragEvent, target: ExtendedHotSource) => {
   try {
     // 更新排序
     await hotStore.updateSource(dragged.id, {
-      ...dragged,
-      sort_order: target.sortOrder
+      ...dragged,                   // 保留原有的所有字段
+      sort_order: target.sortOrder,
+      name: dragged.name,           // 确保包含必要字段
+      url: dragged.url,
+      icon: dragged.icon
     })
     await hotStore.updateSource(target.id, {
-      ...target,
-      sort_order: dragged.sortOrder
+      ...target,                    // 保留原有的所有字段
+      sort_order: dragged.sortOrder,
+      name: target.name,            // 确保包含必要字段
+      url: target.url,
+      icon: target.icon
     })
 
     // 重新获取数据
@@ -496,7 +508,7 @@ const handleDragLeave = (e: DragEvent) => {
   vertical-align: middle;
 }
 
-/* 确保开关在单元格中居中 */
+/* 确保开在单元格中居中 */
 .cell .n-switch {
   margin: 0 auto;
 }
