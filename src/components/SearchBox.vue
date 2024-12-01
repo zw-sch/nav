@@ -48,12 +48,18 @@
       >
         <div
           v-for="(suggestion, index) in suggestions"
-          :key="suggestion"
+          :key="index"
           class="suggestion-item"
           :class="{ 'selected': index === selectedIndex }"
           @click="handleSuggestionSelect(suggestion)"
         >
-          {{ suggestion }}
+          <template v-if="suggestion.type === 'bookmark'">
+            <Icon :icon="suggestion.icon" class="suggestion-icon" />
+            <span class="suggestion-text">{{ suggestion.text }}</span>
+          </template>
+          <template v-else>
+            {{ suggestion.text }}
+          </template>
         </div>
       </div>
     </form>
@@ -67,10 +73,13 @@ import { Icon } from '@iconify/vue'
 import { NButton } from 'naive-ui'
 import { useSearchStore } from '@/stores/searchStore'
 import { useUserStore } from '@/stores/userStore'
+import { useBookmarkStore } from '@/stores/bookmarkStore'
 import type { SearchEngine } from '@/types/search'
+import type { Bookmark } from '@/types/bookmark'
 
 const searchStore = useSearchStore()
 const userStore = useUserStore()
+const bookmarkStore = useBookmarkStore()
 const { engines, currentEngine, searchText } = storeToRefs(searchStore)
 const { isLoggedIn } = storeToRefs(userStore)
 const { setCurrentEngine } = searchStore
@@ -85,6 +94,19 @@ const emit = defineEmits<{
 }>()
 
 const handleSearch = () => {
+  // 检查是否是快捷命令
+  const shortcutMatch = searchText.value.match(/^\/(\w+)$/)
+  if (shortcutMatch) {
+    // 找到对应的搜索引擎
+    const shortcut = shortcutMatch[1]
+    const targetEngine = engines.value.find(e => e.shortcut === shortcut)
+    if (targetEngine) {
+      // 如果找到对应的搜索引擎，直接跳转到其主页
+      window.open(targetEngine.home_url || targetEngine.search_url.split('?')[0], '_blank')
+      return
+    }
+  }
+  // 不是快捷命令或没找到对应引擎，执行普通搜索
   searchStore.search()
 }
 
@@ -133,7 +155,7 @@ defineProps<{
 }>()
 
 // 添加自动补全相关的状态
-const suggestions = ref<string[]>([])
+const suggestions = ref<{ type: string; text: string; bookmark?: Bookmark }[]>([])
 const showSuggestions = ref(false)
 
 // 添加 JSONP 请求函数
@@ -145,14 +167,44 @@ const fetchSuggestions = (query: string) => {
     return
   }
 
+  // 先搜索书签
+  const searchLower = query.toLowerCase()
+  const matchedBookmarks = bookmarkStore.state.bookmarks.filter(
+    (b) => {
+      // 过滤掉没有任何URL的书签
+      const hasUrl = b.externalUrl || b.internalUrl
+      return hasUrl && (
+        b.name.toLowerCase().includes(searchLower) ||
+        b.remark?.toLowerCase().includes(searchLower)
+      )
+    }
+  )
+
+  // 创建 JSONP 回调
   const script = document.createElement('script')
   const callbackName = `jsonp_${Date.now()}`
 
-  window[callbackName] = (data: any) => {
-    suggestions.value = data.result.map((item: { word: string }) => item.word)
+  ;(window as any)[callbackName] = (data: any) => {
+    // 确保 data.result 存在，如果不存在则使用空数组
+    const searchSuggestions = (data?.result || []).map((item: { word: string }) => item.word)
+
+    // 合并书签和搜索建议
+    suggestions.value = [
+      ...matchedBookmarks.map(b => ({
+        type: 'bookmark',
+        text: b.name,
+        icon: b.icon || 'material-symbols:bookmark',
+        bookmark: b
+      })),
+      ...searchSuggestions.map(s => ({
+        type: 'suggestion',
+        text: s
+      }))
+    ]
+
     showSuggestions.value = true
     document.body.removeChild(script)
-    delete window[callbackName]
+    delete (window as any)[callbackName]
   }
 
   // 处理快捷命令：提取空格后的内容作为搜索词
@@ -166,7 +218,7 @@ const fetchSuggestions = (query: string) => {
 watch(() => searchText.value, (newValue) => {
   // 只在以下情况不显示补全：
   // 1. 无输入
-  // 2. 只输入了 /
+  // 2. 输入了 /
   // 3. 只输入了快捷命令（如 /gh, /123, /abc 等）
   if (newValue && !/^\/($|[\w\d]+$)/.test(newValue)) {
     fetchSuggestions(newValue)
@@ -181,26 +233,70 @@ watch(() => searchText.value, (newValue) => {
   }
 })
 
-// 修改 handleSuggestionSelect 函数
-const handleSuggestionSelect = (suggestion: string) => {
-  // 如果原始输入是快捷命令格式，保留快捷命令部分
-  const prefix = searchText.value.match(/^\/[\w\d]+\s+/)?.[0] || ''
-  searchText.value = prefix + suggestion
-  showSuggestions.value = false
-  selectedIndex.value = -1
-  if (suggestionsRef.value) {
-    suggestionsRef.value.scrollTop = 0
+// 修改建议选择处理函数
+const handleSuggestionSelect = (suggestion: { type: string; text: string; bookmark?: Bookmark }) => {
+  if (suggestion.type === 'bookmark' && suggestion.bookmark) {
+    // 如果是书签，直接打开链接
+    const url = bookmarkStore.state.isInternalMode
+      ? suggestion.bookmark.externalUrl || suggestion.bookmark.internalUrl // 优先使用外网地址
+      : suggestion.bookmark.externalUrl || suggestion.bookmark.internalUrl // 外网模式下也优先使用外网地址，没有则使用内网地址
+    if (url) {
+      window.open(url, '_blank')
+    }
+    showSuggestions.value = false
+    searchText.value = ''
+  } else {
+    // 如果是普通搜索建议
+    const prefix = searchText.value.match(/^\/[\w\d]+\s+/)?.[0] || ''
+    searchText.value = prefix + suggestion.text
+    showSuggestions.value = false
+    handleSearch()
   }
-  handleSearch()
 }
 
-const selectedIndex = ref(-1) // 当前选中的建议词索引
+const selectedIndex = ref(-1) // 当前选中的建词索引
 
-// 修改键盘事件处理
+// 修改键盘事件处理函数
 const handleKeydown = (e: KeyboardEvent) => {
-  if (!showSuggestions.value || suggestions.value.length === 0) {
+  // 确保 suggestions.value 始终是数组
+  if (!showSuggestions.value || !Array.isArray(suggestions.value) || suggestions.value.length === 0) {
     if (e.key === 'Enter') {
       e.preventDefault() // 阻止默认行为
+
+      // 检查是否是快捷命令
+      const shortcutMatch = searchText.value.match(/^\/(\w+)$/)
+      if (shortcutMatch) {
+        handleSearch() // 如果是快捷命令，直接调用 handleSearch
+        return
+      }
+
+      // 检查是否有书签匹配
+      const searchLower = searchText.value.toLowerCase()
+      const matchedBookmarks = userStore.isLoggedIn && bookmarkStore.$state.bookmarks
+        ? bookmarkStore.$state.bookmarks.filter(
+            (b: Bookmark) => {
+              const hasUrl = b.externalUrl || b.internalUrl
+              return hasUrl && (
+                b.name.toLowerCase().includes(searchLower) ||
+                b.remark?.toLowerCase().includes(searchLower)
+              )
+            }
+          )
+        : []
+
+      // 如果有匹配的书签，直接打开第一个
+      if (matchedBookmarks.length > 0) {
+        const firstBookmark = matchedBookmarks[0]
+        const url = bookmarkStore.$state.isInternalMode
+          ? firstBookmark.internalUrl || firstBookmark.externalUrl
+          : firstBookmark.externalUrl || firstBookmark.internalUrl
+        if (url) {
+          window.open(url, '_blank')
+          searchText.value = ''
+          return
+        }
+      }
+      // 如果没有匹配的书签，执行普通搜索
       handleSearch()
     }
     return
@@ -224,7 +320,13 @@ const handleKeydown = (e: KeyboardEvent) => {
       if (selectedIndex.value >= 0) {
         handleSuggestionSelect(suggestions.value[selectedIndex.value])
       } else {
-        handleSearch()
+        // 如果没有选中任何建议，但有书签类型的建议，直接选择第一个书签
+        const firstBookmark = suggestions.value.find(s => s.type === 'bookmark')
+        if (firstBookmark) {
+          handleSuggestionSelect(firstBookmark)
+        } else {
+          handleSearch()
+        }
       }
       break
     case 'Escape':
@@ -449,6 +551,20 @@ const suggestionsRef = ref<HTMLDivElement | null>(null)
 
         &.selected {
           background: var(--bg-secondary);
+        }
+
+        // 添加图标样式
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        .suggestion-icon {
+          font-size: 16px;
+          color: var(--primary-color);
+        }
+
+        .suggestion-text {
+          flex: 1;
         }
       }
 
